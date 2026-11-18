@@ -76,15 +76,22 @@ function verticalGradient(ctx, area, color) {
   return g;
 }
 
+/** Colores del tema actual (se leen de las variables CSS). */
+const theme = {};
+function readTheme() {
+  ['accent', 'muted', 'grid', 'surface', 'surface-2', 'text', 'border'].forEach(k => { theme[k] = cssVar(`--${k}`); });
+}
+
 function setupChartDefaults() {
+  readTheme();
   Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
   Chart.defaults.font.size = 12;
-  Chart.defaults.color = cssVar('--muted');
-  Chart.defaults.borderColor = cssVar('--grid');
-  Chart.defaults.plugins.tooltip.backgroundColor = cssVar('--surface-2');
-  Chart.defaults.plugins.tooltip.titleColor = cssVar('--text');
-  Chart.defaults.plugins.tooltip.bodyColor = cssVar('--text');
-  Chart.defaults.plugins.tooltip.borderColor = cssVar('--border');
+  Chart.defaults.color = theme.muted;
+  Chart.defaults.borderColor = theme.grid;
+  Chart.defaults.plugins.tooltip.backgroundColor = theme['surface-2'];
+  Chart.defaults.plugins.tooltip.titleColor = theme.text;
+  Chart.defaults.plugins.tooltip.bodyColor = theme.text;
+  Chart.defaults.plugins.tooltip.borderColor = theme.border;
   Chart.defaults.plugins.tooltip.borderWidth = 1;
   Chart.defaults.plugins.tooltip.padding = 10;
   Chart.defaults.plugins.tooltip.cornerRadius = 8;
@@ -92,7 +99,6 @@ function setupChartDefaults() {
 
 /** Línea en vivo: al cargar se "dibuja" punto por punto y luego cada lectura sube suavemente. */
 function createLiveChart() {
-  const accent = cssVar('--accent');
   const rows = DB.recentTotals(LIVE_POINTS);
   const data = rows.map((r, i) => {
     state.liveLabels.set(i, r.t);
@@ -115,14 +121,14 @@ function createLiveChart() {
       datasets: [{
         label: 'Potencia total',
         data,
-        borderColor: accent,
+        borderColor: () => theme.accent,
         borderWidth: 2.5,
         tension: 0.35,
         fill: true,
-        backgroundColor: c => c.chart.chartArea ? verticalGradient(c.chart.ctx, c.chart.chartArea, accent) : 'transparent',
+        backgroundColor: c => c.chart.chartArea ? verticalGradient(c.chart.ctx, c.chart.chartArea, theme.accent) : 'transparent',
         pointRadius: 0,
         pointHoverRadius: 5,
-        pointBackgroundColor: accent,
+        pointBackgroundColor: () => theme.accent,
       }],
     },
     options: {
@@ -192,7 +198,7 @@ function createDailyChart() {
         data: rows.map(r => r.kwh),
         backgroundColor: c => {
           const last = c.dataIndex === c.dataset.data.length - 1;
-          return last ? cssVar('--accent') : COLORS[5] + 'cc';
+          return last ? theme.accent : COLORS[5] + 'cc';
         },
         borderRadius: 8,
         maxBarThickness: 46,
@@ -275,7 +281,7 @@ function createDevicesChart() {
       datasets: [{
         data: rows.map(r => r.kwh),
         backgroundColor: rows.map(r => colorFor(r.id)),
-        borderColor: cssVar('--surface'),
+        borderColor: () => theme.surface,
         borderWidth: 3,
         hoverOffset: 8,
       }],
@@ -498,6 +504,33 @@ function toggleSim(force) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Tema claro / oscuro                                                */
+/* ------------------------------------------------------------------ */
+function updateThemeButton() {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  const label = dark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
+  $('#btnTheme').setAttribute('aria-label', label);
+  $('#btnTheme').title = label;
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('voltix.theme', next); } catch { /* sin almacenamiento */ }
+  updateThemeButton();
+  setupChartDefaults();           // vuelve a leer las variables CSS
+  Object.values(charts).forEach(c => {
+    // las escalas guardan los colores al crearse: se actualizan explícitamente
+    Object.values(c.options.scales || {}).forEach(s => {
+      if (s.ticks) s.ticks.color = theme.muted;
+      if (s.grid) s.grid.color = theme.grid;
+    });
+    if (c.options.plugins?.legend?.labels) c.options.plugins.legend.labels.color = theme.muted;
+    c.update('none');
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Arranque                                                           */
 /* ------------------------------------------------------------------ */
 function buildDashboard() {
@@ -533,6 +566,8 @@ async function main() {
   bindSqlConsole();
   runSql();
 
+  updateThemeButton();
+  $('#btnTheme').addEventListener('click', toggleTheme);
   $('#btnSim').addEventListener('click', () => toggleSim());
   $('#btnExport').addEventListener('click', () => DB.exportFile());
   $('#btnReset').addEventListener('click', () => {
