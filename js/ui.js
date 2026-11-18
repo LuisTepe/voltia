@@ -14,7 +14,6 @@ export const colorFor = id => COLORS[(id - 1) % COLORS.length];
 
 const mobileMQ = matchMedia('(max-width: 720px)');
 export const isMobile = () => mobileMQ.matches;
-export const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ---------- Fechas ---------- */
 export const dayOf = d => toStamp(d).slice(0, 10);
@@ -42,7 +41,6 @@ export function countUp(el, to, decimals = 0, duration = 900) {
   if (!el) return;
   const from = parseFloat(el.dataset.v ?? '0');
   el.dataset.v = to;
-  if (reduceMotion) { el.textContent = fmt(to, decimals); return; }
   const t0 = performance.now();
   const step = now => {
     const p = Math.min(1, (now - t0) / duration);
@@ -71,7 +69,6 @@ export function setupChartDefaults() {
     backgroundColor: theme['surface-2'], titleColor: theme.text, bodyColor: theme.text,
     borderColor: theme.border, borderWidth: 1, padding: 10, cornerRadius: 10, displayColors: true,
   });
-  if (reduceMotion) d.animation = false;
 }
 
 export function applyThemeToCharts() {
@@ -95,7 +92,7 @@ export function gradient(ctx, area, color, top = '99', bottom = '05') {
 
 /** Vuelve a reproducir la animación de entrada de una gráfica. */
 export function replay(chart) {
-  if (!chart || reduceMotion) return chart?.update();
+  if (!chart) return;
   chart.$stagger = true;
   chart.reset();
   chart.update();

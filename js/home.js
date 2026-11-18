@@ -3,7 +3,7 @@ import { live, LIVE, currentTotal, todayByDevice } from './live.js';
 import { getDays } from './history.js';
 import {
   $, fmt, money, esc, TARIFA, charts, theme, colorFor, gradient, replay, countUp,
-  F_TIME, dayName, isMobile, reduceMotion,
+  F_TIME, dayName, isMobile,
 } from './ui.js';
 
 const GAUGE_C = 2 * Math.PI * 52;   // circunferencia del medidor (r = 52)
@@ -54,7 +54,7 @@ function createLiveChart() {
   const n = live.series.length;
   const INTRO = 1600;
   const step = INTRO / n;
-  let intro = !reduceMotion;
+  let intro = true;
   setTimeout(() => { intro = false; }, INTRO + 300);
   const previousY = ctx => (ctx.index === 0
     ? ctx.chart.scales.y.getPixelForValue(0)

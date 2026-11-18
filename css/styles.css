@@ -551,15 +551,5 @@ footer { text-align: center; color: var(--muted); font-size: .76rem; padding: 0 
   .day-row.selected:hover { border-color: var(--accent); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: .01ms !important; animation-delay: 0s !important;
-    animation-iteration-count: 1 !important;   /* sin esto, las animaciones infinitas parpadean */
-    transition-duration: .01ms !important;
-  }
-  /* el punto "en vivo" solo se desvanece suavemente, sin moverse */
-  .clock-pill.on .pulse, .live.on .pulse, .eyebrow .pulse {
-    animation: breathe-soft 3.2s ease-in-out infinite !important;
-  }
-}
-@keyframes breathe-soft { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+/* Las animaciones son parte de la experiencia del prototipo: se muestran
+   aunque el sistema tenga activada la opción de reducir animaciones. */
