@@ -4,10 +4,23 @@ Página estática (HTML + CSS + JS) que simula una app para medir el consumo de 
 Los datos simulados se guardan en **SQLite**, que corre dentro del navegador gracias a
 [sql.js](https://github.com/sql-js/sql.js) (SQLite compilado a WebAssembly).
 
+## Secciones
+
+| Pestaña          | Qué muestra |
+|------------------|-------------|
+| **Inicio**       | Consumo en vivo (medidor, gráfica en tiempo real, reparto de hoy), resumen de los últimos 7 días y un consejo de ahorro. |
+| **Historial**    | 7, 14 o 30 días: totales, gráfica apilada por dispositivo, lista de días comparada con el promedio y detalle por hora de cada día. |
+| **Dispositivos** | Tarjetas con la potencia actual de cada aparato y un interruptor para encenderlo o apagarlo. |
+| **Datos**        | Información de la base, lecturas con orden/búsqueda/paginación, consola SQL, exportar y regenerar. |
+
+En celular la navegación es una barra inferior; en escritorio, pestañas en la barra superior.
+
 ## Cómo funciona el almacenamiento
 
-- Al abrir la página por primera vez se crea una base SQLite con 7 días de lecturas por hora.
-- El **modo en vivo** arranca solo: cada segundo simula 1 minuto de consumo y anima gráficas, KPIs y tabla de dispositivos. Todo ocurre en memoria; **no se escribe en la base** (se puede pausar con el botón).
+- Al abrir la página se crea una base SQLite con **30 días de lecturas por hora que terminan hoy**.
+  Si se vuelve otro día, el historial se regenera solo para seguir llegando a la fecha actual.
+- El **modo en vivo** arranca solo: cada segundo simula 1 minuto de consumo y anima gráficas e indicadores.
+  Todo ocurre en memoria; **no se escribe en la base** (se puede pausar con el botón).
 - La base completa se serializa y se guarda en `localStorage`, así que sobrevive a recargas.
 - **Exportar .sqlite** descarga el archivo real; puedes abrirlo con DB Browser for SQLite.
 - Cada visitante tiene **su propia copia** de la base (GitHub Pages no tiene servidor, no se comparte).
@@ -23,10 +36,16 @@ Los datos simulados se guardan en **SQLite**, que corre dentro del navegador gra
 ## Estructura
 
 ```
-index.html      → maquetación
-css/styles.css  → estilos, tema claro/oscuro y animaciones
-js/db.js        → SQLite: esquema, datos simulados, consultas y persistencia
-js/app.js       → gráficas (Chart.js), tablas dinámicas, consola SQL y simulación
+index.html       → maquetación de las 4 pestañas
+css/styles.css   → estilos (mobile-first), tema claro/oscuro y animaciones
+js/db.js         → SQLite: esquema, historial simulado, consultas y persistencia
+js/live.js       → simulación en tiempo real (solo memoria)
+js/ui.js         → utilidades: formato, fechas, tema y gráficas
+js/home.js       → pestaña Inicio
+js/history.js    → pestaña Historial
+js/devices.js    → pestaña Dispositivos
+js/data.js       → pestaña Datos (tabla de lecturas y consola SQL)
+js/app.js        → arranque, navegación por pestañas y reloj en vivo
 ```
 
 ## Probar en local
@@ -59,7 +78,8 @@ El archivo `.nojekyll` evita que GitHub procese el sitio con Jekyll.
 
 ## Personalizar
 
-- Tarifa: `TARIFA` en `js/app.js` (MXN por kWh, valor de ejemplo).
-- Velocidad del modo en vivo: `TICK_MS` y `LIVE_STEP_MIN` en `js/app.js`.
+- Tarifa: `TARIFA` en `js/ui.js` (MXN por kWh, valor de ejemplo).
+- Velocidad del modo en vivo: `LIVE.TICK_MS` y `LIVE.STEP_MIN` en `js/live.js`.
+- Días de historial: `SEED_DAYS` en `js/db.js`.
 - Dispositivos y perfiles de consumo: `DEVICES` y `simulatePower()` en `js/db.js`.
-  Después de cambiarlos usa **Reiniciar datos** (o cambia `STORAGE_KEY`) para regenerar la base.
+  Después de cambiarlos usa **Regenerar historial** (pestaña Datos) o cambia `STORAGE_KEY`.

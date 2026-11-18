@@ -1,21 +1,23 @@
 // Capa de datos: SQLite en el navegador con sql.js (WebAssembly).
-// La base se guarda en localStorage para que sobreviva a recargas de página.
+// La base se guarda en localStorage. El historial simulado siempre termina
+// en la fecha actual: si la base guardada es de otro día, se regenera.
 
 const SQLJS_CDN = 'https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/';
-const STORAGE_KEY = 'voltix.sqlite.v1';
-const SEED_DAYS = 7;              // días de historial inicial
+const STORAGE_KEY = 'voltix.sqlite.v2';
+const OLD_KEYS = ['voltix.sqlite.v1', 'voltia.sqlite.v1'];
+export const SEED_DAYS = 30;        // días de historial simulado (incluye hoy)
 
 let SQL;
 let db;
 
 export const DEVICES = [
-  { id: 1, nombre: 'Refrigerador',        categoria: 'Cocina',          nominal: 150 },
-  { id: 2, nombre: 'Aire acondicionado',  categoria: 'Climatización',   nominal: 1300 },
-  { id: 3, nombre: 'Iluminación',         categoria: 'Iluminación',     nominal: 220 },
-  { id: 4, nombre: 'Lavadora',            categoria: 'Lavandería',      nominal: 500 },
-  { id: 5, nombre: 'Computadora',         categoria: 'Oficina',         nominal: 180 },
-  { id: 6, nombre: 'Televisión',          categoria: 'Entretenimiento', nominal: 110 },
-  { id: 7, nombre: 'Calentador de agua',  categoria: 'Baño',            nominal: 1500 },
+  { id: 1, nombre: 'Refrigerador',       categoria: 'Cocina',          nominal: 150,  icon: '🧊' },
+  { id: 2, nombre: 'Aire acondicionado', categoria: 'Climatización',   nominal: 1300, icon: '❄️' },
+  { id: 3, nombre: 'Iluminación',        categoria: 'Iluminación',     nominal: 220,  icon: '💡' },
+  { id: 4, nombre: 'Lavadora',           categoria: 'Lavandería',      nominal: 500,  icon: '🧺' },
+  { id: 5, nombre: 'Computadora',        categoria: 'Oficina',         nominal: 180,  icon: '💻' },
+  { id: 6, nombre: 'Televisión',         categoria: 'Entretenimiento', nominal: 110,  icon: '📺' },
+  { id: 7, nombre: 'Calentador de agua', categoria: 'Baño',            nominal: 1500, icon: '🚿' },
 ];
 
 const SCHEMA = `
@@ -29,7 +31,7 @@ CREATE TABLE dispositivos (
 CREATE TABLE lecturas (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   dispositivo_id  INTEGER NOT NULL REFERENCES dispositivos(id),
-  fecha_hora      TEXT NOT NULL,          -- 'YYYY-MM-DD HH:MM'
+  fecha_hora      TEXT NOT NULL,          -- 'YYYY-MM-DD HH:MM' (lectura de 1 hora)
   potencia_w      REAL NOT NULL,
   energia_kwh     REAL NOT NULL
 );
@@ -45,18 +47,16 @@ const pad = n => String(n).padStart(2, '0');
 export const toStamp = d =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 export const fromStamp = s => {
-  const [date, time] = s.split(' ');
+  const [date, time = '00:00'] = s.split(' ');
   const [y, m, d] = date.split('-').map(Number);
   const [hh, mm] = time.split(':').map(Number);
   return new Date(y, m - 1, d, hh, mm);
 };
+const dayKey = d => toStamp(d).slice(0, 10);
 
 function toBase64(bytes) {
   let bin = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   return btoa(bin);
 }
 function fromBase64(b64) {
@@ -66,16 +66,26 @@ function fromBase64(b64) {
   return out;
 }
 
-/** Perfil de consumo simulado (W) de cada dispositivo según la hora. */
+/** Número pseudoaleatorio estable (0–1) a partir de un texto: el mismo día siempre da el mismo valor. */
+function hash01(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+/** Perfil de consumo simulado (W) de cada dispositivo según la hora y el día. */
 export function simulatePower(deviceId, date) {
   const h = date.getHours() + date.getMinutes() / 60;
   const r = Math.random();
+  const key = dayKey(date);
   const weekend = [0, 6].includes(date.getDay());
+  const heat = 0.6 + 0.8 * hash01(key + ':calor');          // días más calurosos = más aire acondicionado
+  const laundryDay = weekend || hash01(key + ':lavado') > 0.6;
   switch (deviceId) {
-    case 1: return 105 + r * 75;                                             // ciclos del compresor
-    case 2: return h >= 13 && h < 20 ? 850 + r * 500 : (h >= 22 || h < 1) ? 250 + r * 200 : 0;
+    case 1: return (105 + r * 75) * (0.9 + heat * 0.15);
+    case 2: return h >= 13 && h < 20 ? (750 + r * 450) * heat : (h >= 22 || h < 1) ? (200 + r * 200) * heat : 0;
     case 3: return h >= 18.5 && h < 23.5 ? 150 + r * 80 : h >= 6 && h < 7.5 ? 55 + r * 30 : 3 * r;
-    case 4: return (weekend ? h >= 9 && h < 13 : h >= 10 && h < 11.5) && r > 0.45 ? 400 + r * 150 : 0;
+    case 4: return laundryDay && h >= 10 && h < 12.5 && r > 0.25 ? 400 + r * 150 : 0;
     case 5: return !weekend && h >= 9 && h < 18 ? 115 + r * 75 : 6 + r * 4;
     case 6: return h >= 19 && h < 24 ? 80 + r * 35 : weekend && h >= 11 && h < 15 ? 90 + r * 20 : 1.5;
     case 7: return h >= 6 && h < 8 ? 1250 + r * 300 : 0;
@@ -91,38 +101,55 @@ const round = (n, d) => Math.round(n * 10 ** d) / 10 ** d;
 export async function init() {
   SQL = await window.initSqlJs({ locateFile: f => SQLJS_CDN + f });
   let saved = null;
-  try { saved = localStorage.getItem(STORAGE_KEY); } catch { /* almacenamiento bloqueado */ }
+  try {
+    OLD_KEYS.forEach(k => localStorage.removeItem(k));
+    saved = localStorage.getItem(STORAGE_KEY);
+  } catch { /* almacenamiento bloqueado: se trabaja solo en memoria */ }
+
   if (saved) {
-    try { db = new SQL.Database(fromBase64(saved)); return; }
-    catch (e) { console.warn('Base guardada corrupta, se regenera.', e); }
+    try {
+      db = new SQL.Database(fromBase64(saved));
+      if ((getClock() || '').slice(0, 10) === dayKey(new Date())) return;
+      // la base es de otro día: se regenera para que el historial llegue a hoy
+      const prefs = query('SELECT id, activo FROM dispositivos');
+      db.close();
+      createFresh(prefs);
+      return;
+    } catch (e) {
+      console.warn('Base guardada inválida, se regenera.', e);
+    }
   }
   createFresh();
 }
 
-function createFresh() {
+function createFresh(prefs = []) {
+  const activo = Object.fromEntries(prefs.map(p => [p.id, p.activo]));
   db = new SQL.Database();
   db.run(SCHEMA);
-  const insDev = db.prepare('INSERT INTO dispositivos (id, nombre, categoria, potencia_nominal_w) VALUES (?,?,?,?)');
-  DEVICES.forEach(d => insDev.run([d.id, d.nombre, d.categoria, d.nominal]));
+  const insDev = db.prepare('INSERT INTO dispositivos (id, nombre, categoria, potencia_nominal_w, activo) VALUES (?,?,?,?,?)');
+  DEVICES.forEach(d => insDev.run([d.id, d.nombre, d.categoria, d.nominal, activo[d.id] ?? 1]));
   insDev.free();
 
-  // Historial: lecturas cada hora durante los últimos SEED_DAYS días
-  const end = new Date();
+  // Lecturas por hora desde hace SEED_DAYS días hasta la última hora completa de hoy
+  const now = new Date();
+  const end = new Date(now);
   end.setMinutes(0, 0, 0);
-  const start = new Date(end.getTime() - (SEED_DAYS * 24 - 1) * 3600e3);
-  start.setHours(0);           // empezar a medianoche para tener días completos
+  end.setHours(end.getHours() - 1);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (SEED_DAYS - 1), 0, 0);
+
   const ins = db.prepare('INSERT INTO lecturas (dispositivo_id, fecha_hora, potencia_w, energia_kwh) VALUES (?,?,?,?)');
   db.run('BEGIN');
-  for (let t = new Date(start); t <= end; t = new Date(t.getTime() + 3600e3)) {
+  for (let t = new Date(start); t <= end; t = new Date(t.getFullYear(), t.getMonth(), t.getDate(), t.getHours() + 1)) {
     const stamp = toStamp(t);
     for (const d of DEVICES) {
+      if (activo[d.id] === 0) continue;
       const w = simulatePower(d.id, t);
-      ins.run([d.id, stamp, round(w, 1), round(w / 1000, 4)]);   // 1 h de lectura
+      ins.run([d.id, stamp, round(w, 1), round(w / 1000, 4)]);
     }
   }
   db.run('COMMIT');
   ins.free();
-  db.run("INSERT INTO config VALUES ('reloj', ?)", [toStamp(end)]);
+  db.run("INSERT INTO config VALUES ('reloj', ?)", [toStamp(now)]);
   persist();
 }
 
@@ -132,9 +159,10 @@ export function persist() {
 }
 
 export function reset() {
+  const prefs = query('SELECT id, activo FROM dispositivos');
   try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   db.close();
-  createFresh();
+  createFresh(prefs);
 }
 
 export function exportFile() {
@@ -158,51 +186,36 @@ export function query(sql, params = []) {
   return rows;
 }
 const one = (sql, params) => query(sql, params)[0] || {};
+const dayRange = day => [`${day} 00:00`, `${day} 23:59`];
 
 export const getClock = () => one("SELECT valor FROM config WHERE clave = 'reloj'").valor;
 
+export const devices = () => query(`
+  SELECT id, nombre, categoria, potencia_nominal_w AS nominal, activo FROM dispositivos ORDER BY id`)
+  .map(d => ({ ...d, icon: DEVICES.find(x => x.id === d.id)?.icon || '🔌' }));
 
-export function kpis() {
-  const clock = getClock();
-  const today = clock.slice(0, 10);
-  const last = one('SELECT MAX(fecha_hora) AS t FROM lecturas').t;
-  const prev = one('SELECT MAX(fecha_hora) AS t FROM lecturas WHERE fecha_hora < ?', [last]).t;
-  const powerAt = t => one('SELECT COALESCE(SUM(potencia_w),0) AS w FROM lecturas WHERE fecha_hora = ?', [t]).w || 0;
-  const peak = one(`SELECT fecha_hora AS t, SUM(potencia_w) AS w FROM lecturas
-                    WHERE substr(fecha_hora,1,10) = ? GROUP BY fecha_hora ORDER BY w DESC LIMIT 1`, [today]);
-  const yesterday = one(`SELECT COALESCE(SUM(energia_kwh),0) AS k FROM lecturas
-                         WHERE substr(fecha_hora,1,10) = date(?, '-1 day')`, [today]).k;
-  return {
-    clock,
-    powerNow: powerAt(last),
-    powerPrev: prev ? powerAt(prev) : 0,
-    todayKwh: one('SELECT COALESCE(SUM(energia_kwh),0) AS k FROM lecturas WHERE substr(fecha_hora,1,10) = ?', [today]).k,
-    yesterdayKwh: yesterday,
-    weekKwh: one(`SELECT COALESCE(SUM(energia_kwh),0) AS k FROM lecturas
-                  WHERE substr(fecha_hora,1,10) >= date(?, '-6 day')`, [today]).k,
-    peak,
-    readings: one('SELECT COUNT(*) AS n FROM lecturas').n,
-  };
-}
+/** kWh por dispositivo en un día. */
+export const dayByDevice = day => query(`
+  SELECT dispositivo_id AS id, SUM(energia_kwh) AS kwh FROM lecturas
+  WHERE fecha_hora BETWEEN ? AND ? GROUP BY dispositivo_id`, dayRange(day));
 
-export const recentTotals = n => query(`
+/** kWh por día y dispositivo desde una fecha. */
+export const dailyByDevice = fromDay => query(`
+  SELECT substr(fecha_hora,1,10) AS dia, dispositivo_id AS id, SUM(energia_kwh) AS kwh
+  FROM lecturas WHERE fecha_hora >= ? GROUP BY dia, dispositivo_id ORDER BY dia`, [`${fromDay} 00:00`]);
+
+/** kWh por hora de un día. */
+export const dayHourly = day => query(`
+  SELECT CAST(substr(fecha_hora,12,2) AS INTEGER) AS h, SUM(energia_kwh) AS kwh FROM lecturas
+  WHERE fecha_hora BETWEEN ? AND ? GROUP BY h ORDER BY h`, dayRange(day));
+
+/** Hora con mayor potencia total de un día. */
+export const peakForDay = day => one(`
   SELECT fecha_hora AS t, SUM(potencia_w) AS w FROM lecturas
-  GROUP BY fecha_hora ORDER BY fecha_hora DESC LIMIT ?`, [n]).reverse();
+  WHERE fecha_hora BETWEEN ? AND ? GROUP BY fecha_hora ORDER BY w DESC LIMIT 1`, dayRange(day));
 
-export const daily = (n = 7) => query(`
-  SELECT substr(fecha_hora,1,10) AS dia, SUM(energia_kwh) AS kwh FROM lecturas
-  GROUP BY dia ORDER BY dia DESC LIMIT ?`, [n]).reverse();
-
-export const hourly = () => query(`
-  SELECT CAST(substr(fecha_hora,12,2) AS INTEGER) AS h,
-         SUM(energia_kwh) / COUNT(DISTINCT substr(fecha_hora,1,10)) AS kwh
-  FROM lecturas GROUP BY h ORDER BY h`);
-
-export const byDevice = () => query(`
-  SELECT d.id, d.nombre, d.categoria, d.potencia_nominal_w AS nominal, d.activo,
-         COALESCE(SUM(l.energia_kwh),0) AS kwh
-  FROM dispositivos d LEFT JOIN lecturas l ON l.dispositivo_id = d.id
-  GROUP BY d.id ORDER BY d.id`);
+export const stats = () => one(`
+  SELECT COUNT(*) AS n, MIN(fecha_hora) AS desde, MAX(fecha_hora) AS hasta FROM lecturas`);
 
 export function setActive(id, active) {
   db.run('UPDATE dispositivos SET activo = ? WHERE id = ?', [active ? 1 : 0, id]);
@@ -237,3 +250,6 @@ export function runSQL(sql) {
   if (changes) persist();
   return { result: results[results.length - 1] || null, changes };
 }
+
+/** Tamaño aproximado de la base en bytes. */
+export const sizeBytes = () => db.export().length;
