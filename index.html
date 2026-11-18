@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voltia · Monitor de consumo</title>
+  <meta name="description" content="Prototipo de app para medir el consumo eléctrico con datos simulados guardados en SQLite.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <!-- SQLite compilado a WebAssembly -->
+  <script src="https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.js"></script>
+  <!-- Gráficas -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="loader" class="loader">
+    <div class="spinner"></div>
+    <p>Cargando base de datos SQLite…</p>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">⚡</span>
+      <div>
+        <h1>Voltia</h1>
+        <p>Prototipo · monitor de consumo eléctrico</p>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="clock" title="Reloj de la simulación">🕒 <span id="simClock">—</span></span>
+      <button id="btnSim" class="btn primary">▶ Iniciar simulación</button>
+      <button id="btnExport" class="btn">Exportar .sqlite</button>
+      <button id="btnReset" class="btn ghost">Reiniciar datos</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="kpis">
+      <article class="kpi reveal">
+        <span class="kpi-label">Potencia actual</span>
+        <span class="kpi-value"><span id="kpiPower">0</span><small>W</small></span>
+        <span class="kpi-sub" id="kpiPowerSub">&nbsp;</span>
+      </article>
+      <article class="kpi reveal">
+        <span class="kpi-label">Consumo de hoy</span>
+        <span class="kpi-value"><span id="kpiToday">0</span><small>kWh</small></span>
+        <span class="kpi-sub" id="kpiTodaySub">&nbsp;</span>
+      </article>
+      <article class="kpi reveal">
+        <span class="kpi-label">Costo estimado hoy</span>
+        <span class="kpi-value"><small>$</small><span id="kpiCost">0</span><small>MXN</small></span>
+        <span class="kpi-sub" id="kpiCostSub">&nbsp;</span>
+      </article>
+      <article class="kpi reveal">
+        <span class="kpi-label">Últimos 7 días</span>
+        <span class="kpi-value"><span id="kpiWeek">0</span><small>kWh</small></span>
+        <span class="kpi-sub" id="kpiWeekSub">&nbsp;</span>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="card span-2 reveal">
+        <header class="card-head">
+          <h2>Potencia en tiempo real</h2>
+          <span class="live" id="liveBadge"><span class="pulse"></span><span id="liveText">en pausa</span></span>
+        </header>
+        <div class="chart-box tall"><canvas id="chartLive" aria-label="Potencia total en el tiempo"></canvas></div>
+      </article>
+
+      <article class="card reveal">
+        <header class="card-head"><h2>Consumo por dispositivo</h2></header>
+        <div class="chart-box tall donut">
+          <canvas id="chartDevices" aria-label="Consumo por dispositivo"></canvas>
+          <div class="donut-center"><strong id="donutTotal">0</strong><span>kWh totales</span></div>
+        </div>
+      </article>
+
+      <article class="card span-2 reveal">
+        <header class="card-head"><h2>Consumo diario</h2><span class="muted">kWh por día</span></header>
+        <div class="chart-box"><canvas id="chartDaily" aria-label="Consumo diario en kWh"></canvas></div>
+      </article>
+
+      <article class="card reveal">
+        <header class="card-head"><h2>Perfil por hora</h2><span class="muted">kWh promedio</span></header>
+        <div class="chart-box"><canvas id="chartHourly" aria-label="Consumo promedio por hora del día"></canvas></div>
+      </article>
+    </section>
+
+    <section class="card reveal">
+      <header class="card-head">
+        <h2>Dispositivos</h2>
+        <span class="muted">Apaga un dispositivo para excluirlo de la simulación</span>
+      </header>
+      <div class="table-wrap">
+        <table id="tblDevices" class="table">
+          <thead>
+            <tr><th>Dispositivo</th><th>Categoría</th><th class="num">Nominal (W)</th><th class="num">Energía (kWh)</th><th>Participación</th><th class="center">Activo</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card reveal">
+      <header class="card-head">
+        <h2>Lecturas <span class="count" id="readCount">0</span></h2>
+        <div class="tools">
+          <input id="search" type="search" placeholder="Buscar dispositivo, categoría o fecha…" autocomplete="off">
+          <select id="pageSize" aria-label="Filas por página">
+            <option value="10">10 filas</option>
+            <option value="25">25 filas</option>
+            <option value="50">50 filas</option>
+          </select>
+        </div>
+      </header>
+      <div class="table-wrap">
+        <table id="tblReadings" class="table sortable">
+          <thead>
+            <tr>
+              <th data-col="id">ID</th>
+              <th data-col="fecha_hora" class="desc">Fecha y hora</th>
+              <th data-col="dispositivo">Dispositivo</th>
+              <th data-col="categoria">Categoría</th>
+              <th data-col="potencia_w" class="num">Potencia (W)</th>
+              <th data-col="energia_kwh" class="num">Energía (kWh)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="prevPage" class="btn small">← Anterior</button>
+        <span id="pageInfo">—</span>
+        <button id="nextPage" class="btn small">Siguiente →</button>
+      </div>
+    </section>
+
+    <section class="card reveal">
+      <header class="card-head">
+        <h2>Consola SQL</h2>
+        <span class="muted">Consulta la base SQLite que vive en tu navegador</span>
+      </header>
+      <div class="examples" id="sqlExamples"></div>
+      <textarea id="sqlInput" spellcheck="false" rows="5"></textarea>
+      <div class="sql-actions">
+        <button id="btnRunSql" class="btn primary small">Ejecutar (Ctrl+Enter)</button>
+        <span id="sqlStatus" class="muted"></span>
+      </div>
+      <div class="table-wrap"><table id="tblSql" class="table"><thead></thead><tbody></tbody></table></div>
+    </section>
+  </main>
+
+  <footer>
+    Datos simulados · almacenados en SQLite (sql.js / WebAssembly) dentro de tu navegador · Prototipo Voltia
+  </footer>
+</body>
+</html>
