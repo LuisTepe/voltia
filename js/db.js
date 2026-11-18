@@ -3,7 +3,6 @@
 
 const SQLJS_CDN = 'https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/';
 const STORAGE_KEY = 'voltix.sqlite.v1';
-const STEP_MINUTES = 15;          // cada "tick" de la simulación avanza 15 min
 const SEED_DAYS = 7;              // días de historial inicial
 
 let SQL;
@@ -68,7 +67,7 @@ function fromBase64(b64) {
 }
 
 /** Perfil de consumo simulado (W) de cada dispositivo según la hora. */
-function simulatePower(deviceId, date) {
+export function simulatePower(deviceId, date) {
   const h = date.getHours() + date.getMinutes() / 60;
   const r = Math.random();
   const weekend = [0, 6].includes(date.getDay());
@@ -162,22 +161,6 @@ const one = (sql, params) => query(sql, params)[0] || {};
 
 export const getClock = () => one("SELECT valor FROM config WHERE clave = 'reloj'").valor;
 
-/** Avanza la simulación: inserta una lectura por dispositivo activo. */
-export function tick() {
-  const next = new Date(fromStamp(getClock()).getTime() + STEP_MINUTES * 60e3);
-  const stamp = toStamp(next);
-  const active = query('SELECT id FROM dispositivos WHERE activo = 1');
-  const ins = db.prepare('INSERT INTO lecturas (dispositivo_id, fecha_hora, potencia_w, energia_kwh) VALUES (?,?,?,?)');
-  const ids = [];
-  for (const { id } of active) {
-    const w = simulatePower(id, next);
-    ins.run([id, stamp, round(w, 1), round(w * (STEP_MINUTES / 60) / 1000, 4)]);
-    ids.push(one('SELECT last_insert_rowid() AS id').id);
-  }
-  ins.free();
-  db.run("UPDATE config SET valor = ? WHERE clave = 'reloj'", [stamp]);
-  return { stamp, ids };
-}
 
 export function kpis() {
   const clock = getClock();

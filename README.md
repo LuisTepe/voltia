@@ -7,7 +7,7 @@ Los datos simulados se guardan en **SQLite**, que corre dentro del navegador gra
 ## Cómo funciona el almacenamiento
 
 - Al abrir la página por primera vez se crea una base SQLite con 7 días de lecturas por hora.
-- Con **▶ Iniciar simulación** cada 2 s se insertan nuevas lecturas (1 por dispositivo, 15 min simulados).
+- El **modo en vivo** arranca solo: cada segundo simula 1 minuto de consumo y anima gráficas, KPIs y tabla de dispositivos. Todo ocurre en memoria; **no se escribe en la base** (se puede pausar con el botón).
 - La base completa se serializa y se guarda en `localStorage`, así que sobrevive a recargas.
 - **Exportar .sqlite** descarga el archivo real; puedes abrirlo con DB Browser for SQLite.
 - Cada visitante tiene **su propia copia** de la base (GitHub Pages no tiene servidor, no se comparte).
@@ -60,6 +60,6 @@ El archivo `.nojekyll` evita que GitHub procese el sitio con Jekyll.
 ## Personalizar
 
 - Tarifa: `TARIFA` en `js/app.js` (MXN por kWh, valor de ejemplo).
-- Velocidad de simulación: `TICK_MS` en `js/app.js`, `STEP_MINUTES` en `js/db.js`.
+- Velocidad del modo en vivo: `TICK_MS` y `LIVE_STEP_MIN` en `js/app.js`.
 - Dispositivos y perfiles de consumo: `DEVICES` y `simulatePower()` en `js/db.js`.
   Después de cambiarlos usa **Reiniciar datos** (o cambia `STORAGE_KEY`) para regenerar la base.

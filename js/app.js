@@ -1,7 +1,8 @@
 import * as DB from './db.js';
 
 const TARIFA = 2.85;        // MXN por kWh (valor de ejemplo)
-const TICK_MS = 2000;       // cada 2 s llega una lectura simulada
+const TICK_MS = 1000;       // cada segundo llega una medición en vivo
+const LIVE_STEP_MIN = 1;    // cada medición equivale a 1 minuto simulado
 const LIVE_POINTS = 48;     // puntos visibles en la gráfica en vivo
 const COLORS = ['#22d3ee', '#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa', '#f87171'];
 
@@ -19,6 +20,40 @@ const state = {
   liveX: 0, liveLabels: new Map(),
 };
 const charts = {};
+
+/**
+ * Estado del modo "en vivo". Todo vive en memoria: la base SQLite solo se lee
+ * al arrancar (línea base) y nunca se escribe desde aquí.
+ */
+const live = {
+  time: null,          // reloj simulado
+  power: {},           // W actuales por dispositivo
+  extra: {},           // kWh acumulados en vivo por dispositivo
+  extraByDay: {},      // kWh acumulados en vivo por día
+  active: new Set(),   // dispositivos encendidos
+  base: null,          // KPIs de la base al arrancar
+  dailyBase: [],       // consumo diario de la base
+  devBase: [],         // consumo por dispositivo de la base
+  peak: { w: 0, t: '' },
+  prevTotal: 0,
+};
+
+function initLive() {
+  const k = DB.kpis();
+  live.base = k;
+  live.time = DB.fromStamp(k.clock);
+  live.extra = {};
+  live.extraByDay = {};
+  live.dailyBase = DB.daily(7);
+  live.devBase = DB.byDevice();
+  live.active = new Set(live.devBase.filter(d => d.activo).map(d => d.id));
+  live.power = {};
+  DB.query(`SELECT dispositivo_id AS id, potencia_w AS w FROM lecturas
+            WHERE fecha_hora = (SELECT MAX(fecha_hora) FROM lecturas)`)
+    .forEach(r => { live.power[r.id] = r.w; });
+  live.prevTotal = k.powerNow;
+  live.peak = k.peak.t ? { w: k.peak.w, t: k.peak.t.slice(11) } : { w: 0, t: '' };
+}
 
 /* ------------------------------------------------------------------ */
 /* Animación de números                                               */
@@ -144,7 +179,7 @@ function createLiveChart() {
         y: {
           type: 'number',
           easing: () => (intro ? 'linear' : 'easeOutCubic'),
-          duration: () => (intro ? stepDelay : 900),
+          duration: () => (intro ? stepDelay : 800),
           from: ctx => (intro && ctx.type === 'data' ? previousY(ctx) : undefined),
           delay: ctx => (intro && ctx.type === 'data' ? ctx.index * stepDelay : 0),
         },
@@ -173,12 +208,11 @@ function createLiveChart() {
   });
 }
 
-function pushLivePoint() {
-  const last = DB.recentTotals(1)[0];
+function pushLivePoint(stamp, watts) {
   const ds = charts.live.data.datasets[0].data;
   state.liveX += 1;
-  state.liveLabels.set(state.liveX, last.t);
-  ds.push({ x: state.liveX, y: last.w });
+  state.liveLabels.set(state.liveX, stamp);
+  ds.push({ x: state.liveX, y: watts });
   if (ds.length > LIVE_POINTS) {
     const removed = ds.shift();
     state.liveLabels.delete(removed.x);
@@ -224,10 +258,13 @@ function createDailyChart() {
   });
 }
 
+/** Barras diarias = base + lo acumulado en vivo (si cambia el día aparece una barra nueva). */
 function updateDailyChart() {
-  const rows = DB.daily(7);
-  charts.daily.data.labels = rows.map(r => DAY_FMT.format(DB.fromStamp(r.dia + ' 00:00')));
-  charts.daily.data.datasets[0].data = rows.map(r => r.kwh);
+  const byDay = new Map(live.dailyBase.map(r => [r.dia, r.kwh]));
+  Object.entries(live.extraByDay).forEach(([d, k]) => byDay.set(d, (byDay.get(d) || 0) + k));
+  const rows = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-7);
+  charts.daily.data.labels = rows.map(([d]) => DAY_FMT.format(DB.fromStamp(d + ' 00:00')));
+  charts.daily.data.datasets[0].data = rows.map(([, k]) => k);
   charts.daily.update();
 }
 
@@ -240,8 +277,11 @@ function createHourlyChart() {
       labels: rows.map(r => `${String(r.h).padStart(2, '0')}h`),
       datasets: [{
         data: rows.map(r => r.kwh),
-        backgroundColor: c => (c.chart.chartArea ? verticalGradient(c.chart.ctx, c.chart.chartArea, COLORS[2]) : COLORS[2]),
-        borderColor: COLORS[2],
+        // la hora actual del reloj simulado se resalta
+        backgroundColor: c => (live.time && c.dataIndex === live.time.getHours()
+          ? theme.accent
+          : c.chart.chartArea ? verticalGradient(c.chart.ctx, c.chart.chartArea, COLORS[2]) : COLORS[2]),
+        borderColor: c => (live.time && c.dataIndex === live.time.getHours() ? theme.accent : COLORS[2]),
         borderWidth: { top: 2, left: 0, right: 0, bottom: 0 },
         borderRadius: 4,
         categoryPercentage: 0.9,
@@ -265,11 +305,6 @@ function createHourlyChart() {
       },
     },
   });
-}
-
-function updateHourlyChart() {
-  charts.hourly.data.datasets[0].data = DB.hourly().map(r => r.kwh);
-  charts.hourly.update();
 }
 
 function createDevicesChart() {
@@ -316,8 +351,11 @@ function updateDevicesChart(rows) {
 /* ------------------------------------------------------------------ */
 /* Tabla de dispositivos                                              */
 /* ------------------------------------------------------------------ */
+/** Consumo por dispositivo = base de datos + acumulado en vivo. */
+const liveDeviceRows = () => live.devBase.map(r => ({ ...r, kwh: r.kwh + (live.extra[r.id] || 0) }));
+
 function renderDevices(first = false) {
-  const rows = DB.byDevice();
+  const rows = liveDeviceRows();
   const total = rows.reduce((a, r) => a + r.kwh, 0) || 1;
   const tbody = $('#tblDevices tbody');
 
@@ -327,6 +365,7 @@ function renderDevices(first = false) {
         <td><span class="dot" style="background:${colorFor(r.id)}"></span>${esc(r.nombre)}</td>
         <td><span class="chip">${esc(r.categoria)}</span></td>
         <td class="num">${fmt(r.nominal)}</td>
+        <td class="num now" data-k="now">${fmt(live.power[r.id] || 0)} W</td>
         <td class="num" data-k="kwh">${fmt(r.kwh, 2)}</td>
         <td><div class="share"><div class="bar-track"><span class="bar" data-k="bar" style="width:0;background:${colorFor(r.id)}"></span></div><span data-k="pct">0%</span></div></td>
         <td class="center"><label class="switch" title="Encender / apagar"><input type="checkbox" ${r.activo ? 'checked' : ''} aria-label="Activo ${esc(r.nombre)}"><span class="slider"></span></label></td>
@@ -334,8 +373,10 @@ function renderDevices(first = false) {
     tbody.querySelectorAll('input[type=checkbox]').forEach(cb => {
       cb.addEventListener('change', e => {
         const tr = e.target.closest('tr');
+        const id = Number(tr.dataset.id);
         tr.classList.toggle('off', !e.target.checked);
-        DB.setActive(Number(tr.dataset.id), e.target.checked);
+        DB.setActive(id, e.target.checked);   // solo guarda la preferencia encendido/apagado
+        if (e.target.checked) live.active.add(id); else live.active.delete(id);
       });
     });
     // deja que la fila aparezca y luego llena las barras
@@ -352,6 +393,7 @@ function updateDeviceCells(rows, total) {
     if (!tr) return;
     const pct = (r.kwh / total) * 100;
     tr.querySelector('[data-k=kwh]').textContent = fmt(r.kwh, 2);
+    tr.querySelector('[data-k=now]').textContent = `${fmt(live.power[r.id] || 0)} W`;
     tr.querySelector('[data-k=bar]').style.width = `${pct}%`;
     tr.querySelector('[data-k=pct]').textContent = `${fmt(pct, 1)}%`;
   });
@@ -458,7 +500,7 @@ function runSql() {
       $('#tblSql thead').innerHTML = '';
       $('#tblSql tbody').innerHTML = '';
       status.textContent = `OK · ${changes} fila(s) modificadas · ${ms} ms`;
-      if (changes) refreshAll(false);
+      if (changes) buildDashboard();   // la consola sí puede modificar la base
       return;
     }
     const rows = result.values.slice(0, 200);
@@ -476,29 +518,58 @@ function runSql() {
 /* ------------------------------------------------------------------ */
 /* Simulación                                                         */
 /* ------------------------------------------------------------------ */
-function refreshAll(animateKpi = true, newIds = []) {
-  renderKpis(animateKpi);
+/* Simulación en tiempo real: solo memoria, la base de datos no se modifica. */
+function tick() {
+  live.time = new Date(live.time.getTime() + LIVE_STEP_MIN * 60e3);
+  const stamp = DB.toStamp(live.time);
+  const day = stamp.slice(0, 10);
+  let total = 0;
+
+  for (const d of DB.DEVICES) {
+    const target = live.active.has(d.id) ? DB.simulatePower(d.id, live.time) : 0;
+    const prev = live.power[d.id] ?? target;
+    const w = prev + (target - prev) * 0.45;          // suaviza para que la curva fluya
+    live.power[d.id] = w;
+    total += w;
+    const kwh = (w * LIVE_STEP_MIN) / 60 / 1000;
+    live.extra[d.id] = (live.extra[d.id] || 0) + kwh;
+    live.extraByDay[day] = (live.extraByDay[day] || 0) + kwh;
+  }
+
+  if (day !== live.base.clock.slice(0, 10) && live.peak.day !== day) live.peak = { w: 0, t: '', day };
+  if (total > live.peak.w) live.peak = { w: total, t: stamp.slice(11), day };
+
+  pushLivePoint(stamp, total);
+  renderLiveKpis(total, day);
   updateDailyChart();
-  updateHourlyChart();
-  updateDevicesChart(renderDevices());
-  const showsNewest = state.page === 1 && ['fecha_hora', 'id'].includes(state.sort) && state.dir === 'DESC';
-  renderReadings({ animate: false, newIds: showsNewest ? newIds : [] });
+  charts.hourly.update();                               // mueve el resaltado de la hora actual
+  const rows = renderDevices();
+  updateDevicesChart(rows);
 }
 
-function tick() {
-  const { ids } = DB.tick();
-  pushLivePoint();
-  refreshAll(true, ids);
-  DB.persist();
+function renderLiveKpis(total, day) {
+  const b = live.base;
+  const today = (day === b.clock.slice(0, 10) ? b.todayKwh : 0) + (live.extraByDay[day] || 0);
+  const week = b.weekKwh + Object.values(live.extraByDay).reduce((a, k) => a + k, 0);
+  countUp($('#kpiPower'), total, 0, 800);
+  countUp($('#kpiToday'), today, 2, 800);
+  countUp($('#kpiCost'), today * TARIFA, 2, 800);
+  countUp($('#kpiWeek'), week, 1, 800);
+
+  const delta = total - live.prevTotal;
+  live.prevTotal = total;
+  $('#kpiPowerSub').innerHTML = `<span style="color:${delta >= 0 ? 'var(--bad)' : 'var(--good)'}">${delta >= 0 ? '▲' : '▼'} ${fmt(Math.abs(delta))} W</span> vs. hace 1 min`;
+  $('#kpiTodaySub').textContent = live.peak.t ? `Pico: ${fmt(live.peak.w)} W a las ${live.peak.t}` : '—';
+  $('#simClock').textContent = CLOCK_FMT.format(live.time);
 }
 
 function toggleSim(force) {
   state.running = force ?? !state.running;
   const btn = $('#btnSim');
-  btn.textContent = state.running ? '⏸ Pausar simulación' : '▶ Iniciar simulación';
+  btn.textContent = state.running ? '⏸ Pausar en vivo' : '▶ Reanudar en vivo';
   btn.classList.toggle('running', state.running);
   $('#liveBadge').classList.toggle('on', state.running);
-  $('#liveText').textContent = state.running ? 'en vivo · 1 lectura / 15 min simulados' : 'en pausa';
+  $('#liveText').textContent = state.running ? 'en vivo · simulado, no se guarda' : 'en pausa';
   clearInterval(state.timer);
   if (state.running) { tick(); state.timer = setInterval(tick, TICK_MS); }
 }
@@ -536,6 +607,7 @@ function toggleTheme() {
 function buildDashboard() {
   Object.values(charts).forEach(c => c.destroy());
   state.liveLabels.clear();
+  initLive();
   createLiveChart();
   createDailyChart();
   createHourlyChart();
@@ -572,12 +644,17 @@ async function main() {
   $('#btnExport').addEventListener('click', () => DB.exportFile());
   $('#btnReset').addEventListener('click', () => {
     if (!confirm('¿Borrar todas las lecturas y generar un historial nuevo?')) return;
+    const wasRunning = state.running;
     toggleSim(false);
     DB.reset();
     state.page = 1;
     buildDashboard();
     runSql();
+    if (wasRunning) setTimeout(() => toggleSim(true), 2400);
   });
+
+  // arranca solo cuando termina la animación de entrada de la gráfica
+  setTimeout(() => toggleSim(true), 2400);
 }
 
 main();
