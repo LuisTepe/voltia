@@ -122,10 +122,20 @@ button { font: inherit; color: inherit; }
 
 /* pulso "en vivo" */
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-.clock-pill.on .pulse, .live.on .pulse, .eyebrow .pulse { background: var(--good); animation: pulse 1.5s ease-out infinite; }
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 55%, transparent); }
-  100% { box-shadow: 0 0 0 9px transparent; }
+/* respiración lenta: crece y brilla suavemente, luego se relaja */
+.clock-pill.on .pulse, .live.on .pulse, .eyebrow .pulse {
+  background: var(--good);
+  animation: breathe-dot 3.2s ease-in-out infinite;
+}
+@keyframes breathe-dot {
+  0%, 100% {
+    transform: scale(.85); opacity: .65;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 0%, transparent);
+  }
+  50% {
+    transform: scale(1.1); opacity: 1;
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--good) 18%, transparent);
+  }
 }
 
 /* ---------- Navegación inferior (celular) ---------- */
@@ -542,5 +552,14 @@ footer { text-align: center; color: var(--muted); font-size: .76rem; padding: 0 
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;   /* sin esto, las animaciones infinitas parpadean */
+    transition-duration: .01ms !important;
+  }
+  /* el punto "en vivo" solo se desvanece suavemente, sin moverse */
+  .clock-pill.on .pulse, .live.on .pulse, .eyebrow .pulse {
+    animation: breathe-soft 3.2s ease-in-out infinite !important;
+  }
 }
+@keyframes breathe-soft { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
