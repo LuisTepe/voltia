@@ -1,4 +1,4 @@
-# ⚡ Voltia — prototipo de monitor de consumo eléctrico
+# ⚡ Voltix — prototipo de monitor de consumo eléctrico
 
 Página estática (HTML + CSS + JS) que simula una app para medir el consumo de electricidad.
 Los datos simulados se guardan en **SQLite**, que corre dentro del navegador gracias a
@@ -41,19 +41,19 @@ Luego abre http://localhost:5173
 
 ## Deploy en GitHub Pages
 
-1. Crea un repositorio en GitHub (por ejemplo `voltia`).
+1. Crea un repositorio en GitHub (por ejemplo `voltix`).
 2. Sube estos archivos:
    ```bash
    git init
    git add .
-   git commit -m "Prototipo Voltia"
+   git commit -m "Prototipo Voltix"
    git branch -M main
-   git remote add origin https://github.com/TU_USUARIO/voltia.git
+   git remote add origin https://github.com/TU_USUARIO/voltix.git
    git push -u origin main
    ```
 3. En el repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
    rama `main`, carpeta `/ (root)` → **Save**.
-4. En 1–2 minutos estará en `https://TU_USUARIO.github.io/voltia/`.
+4. En 1–2 minutos estará en `https://TU_USUARIO.github.io/voltix/`.
 
 El archivo `.nojekyll` evita que GitHub procese el sitio con Jekyll.
 

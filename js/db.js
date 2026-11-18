@@ -2,7 +2,7 @@
 // La base se guarda en localStorage para que sobreviva a recargas de página.
 
 const SQLJS_CDN = 'https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/';
-const STORAGE_KEY = 'voltia.sqlite.v1';
+const STORAGE_KEY = 'voltix.sqlite.v1';
 const STEP_MINUTES = 15;          // cada "tick" de la simulación avanza 15 min
 const SEED_DAYS = 7;              // días de historial inicial
 
@@ -142,7 +142,7 @@ export function exportFile() {
   const blob = new Blob([db.export()], { type: 'application/vnd.sqlite3' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'voltia.sqlite';
+  a.download = 'voltix.sqlite';
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
